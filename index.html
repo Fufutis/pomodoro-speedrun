@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Speedrunning Pomodoro (Cumulative Task Timers)</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+            background: #fafafa;
+        }
+
+        h1 {
+            text-align: center;
+        }
+
+        #controls {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        #addTaskBtn,
+        #startAllBtn {
+            padding: 10px 20px;
+            font-size: 1rem;
+            cursor: pointer;
+            margin: 10px;
+        }
+
+        .big-timer-container {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .big-timer {
+            font-size: 3rem;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+
+        .negative {
+            color: red !important;
+        }
+
+        .task-row {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 10px;
+            background: #fff;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+        }
+
+        .task-row input[type="text"],
+        .task-row input[type="number"] {
+            width: 120px;
+            padding: 5px;
+            font-size: 1rem;
+        }
+
+        .task-row button {
+            padding: 8px 12px;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+
+        .timer-display {
+            font-size: 1.2rem;
+            width: 80px;
+            text-align: center;
+        }
+
+        .result {
+            margin-left: 20px;
+            font-style: italic;
+            color: #333;
+            width: 250px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Speedrunning Pomodoro (Cumulative Task Timers)</h1>
+
+    <!-- Big Timer Display -->
+    <div class="big-timer-container">
+        <div>Total Time for All Tasks (Cumulative):</div>
+        <div id="bigTimer" class="big-timer">00:00</div>
+    </div>
+
+    <div id="controls">
+        <button id="addTaskBtn">Add Task</button>
+        <button id="startAllBtn">Start All</button>
+    </div>
+
+    <div id="taskContainer"></div>
+
+    <script>
+        /**********************************************
+         * DATA + VARIABLES
+         **********************************************/
+        const tasks = [];          // Store each task’s data
+        let totalIntervalId = null;
+        let totalEndTime = null;
+
+        /**********************************************
+         * EVENT LISTENERS
+         **********************************************/
+        document.getElementById('addTaskBtn').addEventListener('click', addTask);
+        document.getElementById('startAllBtn').addEventListener('click', startAll);
+
+        /**********************************************
+         * FUNCTION: ADD A NEW TASK ROW
+         **********************************************/
+        function addTask() {
+            // Create a unique task object
+            const task = {
+                container: null,
+                taskNameInput: null,
+                minutesInput: null,
+                startBtn: null,
+                finishBtn: null,
+                timerDisplay: null,
+                resultElem: null,
+
+                endTime: null,
+                intervalId: null,
+                timeLeft: 0,
+            };
+
+            // Create the row container
+            const row = document.createElement('div');
+            row.classList.add('task-row');
+
+            // Task name input
+            const taskNameInput = document.createElement('input');
+            taskNameInput.type = 'text';
+            taskNameInput.placeholder = 'Task Name';
+
+            // Minutes input
+            const minutesInput = document.createElement('input');
+            minutesInput.type = 'number';
+            minutesInput.min = '1';
+            minutesInput.placeholder = '5'; // default
+
+            // Start button
+            const startBtn = document.createElement('button');
+            startBtn.textContent = 'Start';
+
+            // Finish button
+            const finishBtn = document.createElement('button');
+            finishBtn.textContent = 'Finish';
+
+            // Timer display
+            const timerDisplay = document.createElement('div');
+            timerDisplay.classList.add('timer-display');
+            timerDisplay.textContent = '00:00';
+
+            // Result paragraph
+            const resultElem = document.createElement('div');
+            resultElem.classList.add('result');
+
+            // Append elements to row
+            row.appendChild(taskNameInput);
+            row.appendChild(minutesInput);
+            row.appendChild(startBtn);
+            row.appendChild(finishBtn);
+            row.appendChild(timerDisplay);
+            row.appendChild(resultElem);
+
+            // Add row to container
+            document.getElementById('taskContainer').appendChild(row);
+
+            // Store references in the task object
+            task.container = row;
+            task.taskNameInput = taskNameInput;
+            task.minutesInput = minutesInput;
+            task.startBtn = startBtn;
+            task.finishBtn = finishBtn;
+            task.timerDisplay = timerDisplay;
+            task.resultElem = resultElem;
+
+            // Add event listeners for this row (optional to allow individual manual starts)
+            startBtn.addEventListener('click', () => startTimer(task));
+            finishBtn.addEventListener('click', () => finishTimer(task));
+
+            // Push task object to tasks array
+            tasks.push(task);
+        }
+
+        /**********************************************
+         * FUNCTION: START ALL
+         * Sets each task's timer to a CUMULATIVE sum 
+         **********************************************/
+        function startAll() {
+            // Clear any existing big timer
+            if (totalIntervalId) {
+                clearInterval(totalIntervalId);
+            }
+
+            // We'll compute a running total for each task
+            let cumulativeMinutes = 0;
+            const now = Date.now();
+
+            // Validate & set each task's endTime
+            for (let i = 0; i < tasks.length; i++) {
+                const t = tasks[i];
+                if (t.intervalId) {
+                    clearInterval(t.intervalId);
+                }
+
+                const nameVal = t.taskNameInput.value.trim();
+                const minsVal = parseInt(t.minutesInput.value, 10);
+
+                if (!nameVal) {
+                    alert('Please provide a valid task name for all tasks.');
+                    return;
+                }
+                if (isNaN(minsVal) || minsVal <= 0) {
+                    alert('Please enter a valid number of minutes for all tasks.');
+                    return;
+                }
+
+                // Increase the running total by this task's minutes
+                cumulativeMinutes += minsVal;
+
+                // This task's "end time" is now + (the cumulative sum so far)
+                t.endTime = now + (cumulativeMinutes * 60 * 1000);
+                t.timeLeft = 0;
+                t.resultElem.textContent = '';
+                t.timerDisplay.classList.remove('negative');
+
+                // Start an interval for this task
+                t.intervalId = setInterval(() => updateTaskTimer(t), 1000);
+            }
+
+            // The big timer will be the final cumulative sum
+            const bigTimerElem = document.getElementById('bigTimer');
+            bigTimerElem.classList.remove('negative');
+
+            // Calculate big timer's end time
+            totalEndTime = Date.now() + (cumulativeMinutes * 60 * 1000);
+
+            // Start the big timer
+            totalIntervalId = setInterval(updateBigTimer, 1000);
+        }
+
+        /**********************************************
+         * FUNCTION: UPDATE BIG (TOTAL) TIMER
+         **********************************************/
+        function updateBigTimer() {
+            const now = Date.now();
+            const timeLeft = Math.floor((totalEndTime - now) / 1000);
+            const bigTimerElem = document.getElementById('bigTimer');
+
+            if (timeLeft <= 0) {
+                // Negative
+                const lateSeconds = Math.abs(timeLeft);
+                const mins = Math.floor(lateSeconds / 60);
+                const secs = lateSeconds % 60;
+                bigTimerElem.classList.add('negative');
+                bigTimerElem.textContent = `-${padZero(mins)}:${padZero(secs)}`;
+            } else {
+                // Positive countdown
+                const mins = Math.floor(timeLeft / 60);
+                const secs = timeLeft % 60;
+                bigTimerElem.classList.remove('negative');
+                bigTimerElem.textContent = `${padZero(mins)}:${padZero(secs)}`;
+            }
+        }
+
+        /**********************************************
+         * FUNCTION: START TIMER (PER TASK, MANUAL CLICK)
+         * (Optional if you still want to allow manual starts)
+         **********************************************/
+        function startTimer(task) {
+            if (task.intervalId) {
+                clearInterval(task.intervalId);
+            }
+
+            const nameVal = task.taskNameInput.value.trim();
+            const minsVal = parseInt(task.minutesInput.value, 10);
+
+            if (!nameVal) {
+                alert('Please provide a valid task name.');
+                return;
+            }
+            if (isNaN(minsVal) || minsVal <= 0) {
+                alert('Please enter a valid number of minutes for this task.');
+                return;
+            }
+
+            // For "manual start", we treat this as a single (non-cumulative) timer
+            // If you want the manual start to also be cumulative, you'd do similar logic
+            // to 'startAll' but just for this single task.
+            const now = Date.now();
+            task.endTime = now + (minsVal * 60 * 1000);
+            task.timeLeft = 0;
+            task.resultElem.textContent = '';
+            task.timerDisplay.classList.remove('negative');
+
+            task.intervalId = setInterval(() => updateTaskTimer(task), 1000);
+        }
+
+        /**********************************************
+         * FUNCTION: UPDATE INDIVIDUAL TASK TIMER
+         **********************************************/
+        function updateTaskTimer(task) {
+            const now = Date.now();
+            task.timeLeft = Math.floor((task.endTime - now) / 1000);
+
+            if (task.timeLeft <= 0) {
+                // Negative => late
+                const lateSeconds = Math.abs(task.timeLeft);
+                const mins = Math.floor(lateSeconds / 60);
+                const secs = lateSeconds % 60;
+                task.timerDisplay.classList.add('negative');
+                task.timerDisplay.textContent = `-${padZero(mins)}:${padZero(secs)}`;
+            } else {
+                // Positive countdown
+                const mins = Math.floor(task.timeLeft / 60);
+                const secs = task.timeLeft % 60;
+                task.timerDisplay.classList.remove('negative');
+                task.timerDisplay.textContent = `${padZero(mins)}:${padZero(secs)}`;
+            }
+        }
+
+        /**********************************************
+         * FUNCTION: FINISH TIMER (PER TASK)
+         **********************************************/
+        function finishTimer(task) {
+            if (!task.intervalId) return;
+
+            clearInterval(task.intervalId);
+            task.intervalId = null;
+
+            const taskName = task.taskNameInput.value.trim();
+            if (task.timeLeft > 0) {
+                task.resultElem.textContent =
+                    `"${taskName}" finished with ${task.timeLeft} seconds left! Nice job!`;
+            } else {
+                const lateSeconds = Math.abs(task.timeLeft);
+                task.resultElem.textContent =
+                    `"${taskName}" finished ${lateSeconds} seconds late... Keep going!`;
+            }
+        }
+
+        /**********************************************
+         * HELPER: PAD WITH ZERO
+         **********************************************/
+        function padZero(num) {
+            return num < 10 ? '0' + num : num;
+        }
+    </script>
+</body>
+
+</html>
