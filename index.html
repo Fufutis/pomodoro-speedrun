@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8" />
     <!-- We'll dynamically change document.title in JS -->
-    <title>Sequential Speedrunning Pomodoro (3-Way Toggle View)</title>
+    <title>Sequential Speedrunning Pomodoro (3-Way Toggle View + Deletion + runState)</title>
     <style>
         body {
             font-family: sans-serif;
@@ -100,12 +100,23 @@
         .task-finish-info.late {
             color: red;
         }
+
+        /* A small delete button style */
+        .delete-btn {
+            background: #f66;
+            color: #fff;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            margin-top: 5px;
+        }
     </style>
 </head>
 
 <body>
 
-    <h1>Sequential Speedrunning Pomodoro (3-Way Toggle View)</h1>
+    <h1>Sequential Speedrunning Pomodoro (3-Way Toggle + Delete + runState)</h1>
 
     <div class="timers">
         <!-- Big "current" timer -->
@@ -133,6 +144,7 @@
         // We store:
         // - totalAllocatedSec: total # of seconds from all tasks
         // - viewMode: 0 => "Time Left", 1 => "Spent / Left", 2 => "Nothing"
+        // - runState: 0 => Not running (can delete, can add), 1 => Running (blocked)
         let sessionData = {
             tasks: [],                  // { name, minutes, finishInfo }
             currentTaskIndex: -1,
@@ -140,10 +152,13 @@
             totalEndTime: null,
             totalAllocatedSec: 0,
             isSequenceRunning: false,
-            viewMode: 0                // new property to remember which view we’re on
+            viewMode: 0,
+            runState: 0  // 0 => not running, 1 => running
         };
 
-        const taskDOMs = []; // { row, nameInput, minInput, finishInfoElem }
+        // We'll store references to each task row
+        //   { row, nameInput, minInput, finishInfoElem, deleteBtn }
+        const taskDOMs = [];
 
         /************************************************************************
          * ON PAGE LOAD
@@ -178,7 +193,8 @@
             sessionData.totalEndTime = parsed.totalEndTime ?? null;
             sessionData.totalAllocatedSec = parsed.totalAllocatedSec ?? 0;
             sessionData.isSequenceRunning = parsed.isSequenceRunning ?? false;
-            sessionData.viewMode = parsed.viewMode ?? 0;  // restore the viewMode if we want
+            sessionData.viewMode = parsed.viewMode ?? 0;
+            sessionData.runState = parsed.runState ?? 0;
         }
 
         function saveSessionData() {
@@ -192,7 +208,7 @@
             // Rebuild tasks
             for (let i = 0; i < sessionData.tasks.length; i++) {
                 const t = sessionData.tasks[i];
-                createTaskRow(t.name, t.minutes, t.finishInfo);
+                createTaskRow(t.name, t.minutes, t.finishInfo, i);
             }
 
             // Possibly enable "Finish Current"
@@ -203,8 +219,8 @@
                 document.getElementById('finishCurrentBtn').disabled = false;
             }
 
-            // If sequence was running, restore intervals
-            if (sessionData.isSequenceRunning) {
+            // If we are in runState=1 (running) and isSequenceRunning => restore intervals
+            if (sessionData.runState === 1 && sessionData.isSequenceRunning) {
                 if (sessionData.totalEndTime) {
                     startTotalTimerInterval();
                 }
@@ -214,14 +230,8 @@
                 ) {
                     startCurrentTaskInterval();
                 } else if (sessionData.currentTaskIndex >= sessionData.tasks.length) {
-                    document.getElementById('currentTaskTimer').textContent = 'ALL DONE';
-                    document.getElementById('finishCurrentBtn').disabled = true;
-                    // Stop total
-                    if (totalTimerInterval) {
-                        clearInterval(totalTimerInterval);
-                        totalTimerInterval = null;
-                    }
-                    document.title = "All Tasks Done";
+                    // all done
+                    allDone();
                 }
             }
 
@@ -231,9 +241,9 @@
         }
 
         /************************************************************************
-         * CREATE TASK ROW
+         * CREATE TASK ROW (with Delete Button)
          ************************************************************************/
-        function createTaskRow(nameVal = '', minsVal = '', finishText = null) {
+        function createTaskRow(nameVal = '', minsVal = '', finishText = null, index) {
             const row = document.createElement('div');
             row.classList.add('task-row');
 
@@ -274,30 +284,92 @@
                     finishInfoElem.classList.add('late');
                 }
             }
-
             taskInfo.appendChild(finishInfoElem);
+
+            // DELETE Button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.textContent = 'Delete';
+            deleteBtn.classList.add('delete-btn');
+            deleteBtn.addEventListener('click', () => {
+                deleteTask(index);
+            });
+
             row.appendChild(taskInfo);
+            row.appendChild(deleteBtn);
+
             document.getElementById('taskContainer').appendChild(row);
 
-            taskDOMs.push({
+            taskDOMs[index] = {
                 row,
                 nameInput,
                 minInput,
-                finishInfoElem
-            });
+                finishInfoElem,
+                deleteBtn
+            };
         }
 
         /************************************************************************
-         * ADD TASK
+         * DELETE TASK: Only allowed if runState=0
          ************************************************************************/
-        function addTask() {
-            createTaskRow();
-            sessionData.tasks.push({ name: '', minutes: 5, finishInfo: null });
+        function deleteTask(index) {
+            if (sessionData.runState === 1) {
+                alert('Cannot delete tasks while the Pomodoro is running!');
+                return;
+            }
+
+            // Remove from tasks array
+            sessionData.tasks.splice(index, 1);
+
+            // Remove from DOM
+            const row = taskDOMs[index]?.row;
+            if (row && row.parentNode) {
+                row.parentNode.removeChild(row);
+            }
+            taskDOMs.splice(index, 1);
+
+            // Rebuild the UI so indexes match
+            rebuildUI();
+
             saveSessionData();
         }
 
         /************************************************************************
-         * START ALL
+         * REBUILD the entire task list UI (after deletion)
+         ************************************************************************/
+        function rebuildUI() {
+            // Clear container + DOM references
+            document.getElementById('taskContainer').innerHTML = '';
+            taskDOMs.length = 0;
+
+            // Rebuild rows from sessionData.tasks
+            for (let i = 0; i < sessionData.tasks.length; i++) {
+                const t = sessionData.tasks[i];
+                createTaskRow(t.name, t.minutes, t.finishInfo, i);
+            }
+
+            // Refresh the timers, etc.
+            updateTotalTimerDisplay();
+            updateCurrentTaskTimerDisplay();
+            updateDocumentTitle();
+        }
+
+        /************************************************************************
+         * ADD TASK: only if runState=0
+         ************************************************************************/
+        function addTask() {
+            if (sessionData.runState === 1) {
+                alert('Cannot add tasks while the Pomodoro is running!');
+                return;
+            }
+
+            const newIndex = sessionData.tasks.length;
+            sessionData.tasks.push({ name: '', minutes: 5, finishInfo: null });
+            createTaskRow('', 5, null, newIndex);
+            saveSessionData();
+        }
+
+        /************************************************************************
+         * START ALL => runState=1
          ************************************************************************/
         function startAll() {
             if (sessionData.tasks.length === 0) {
@@ -310,7 +382,6 @@
             for (let i = 0; i < taskDOMs.length; i++) {
                 const name = taskDOMs[i].nameInput.value.trim();
                 const mins = parseInt(taskDOMs[i].minInput.value, 10);
-
                 if (!name || isNaN(mins) || mins <= 0) {
                     alert('All tasks must have a valid name and positive minutes.');
                     return;
@@ -332,6 +403,9 @@
             sessionData.currentTaskIndex = 0;
             sessionData.currentTaskEndTime = now + (sessionData.tasks[0].minutes * 60 * 1000);
             sessionData.isSequenceRunning = true;
+
+            // ** runState=1 => Running **
+            sessionData.runState = 1;
 
             if (totalTimerInterval) clearInterval(totalTimerInterval);
             if (currentTaskInterval) clearInterval(currentTaskInterval);
@@ -399,16 +473,7 @@
             sessionData.currentTaskIndex++;
             if (sessionData.currentTaskIndex >= sessionData.tasks.length) {
                 // ALL DONE
-                document.getElementById('finishCurrentBtn').disabled = true;
-                document.getElementById('currentTaskTimer').textContent = 'ALL DONE';
-                sessionData.currentTaskEndTime = null;
-
-                // STOP total
-                if (totalTimerInterval) {
-                    clearInterval(totalTimerInterval);
-                    totalTimerInterval = null;
-                }
-                document.title = "All Tasks Done";
+                allDone();
             } else {
                 // Next
                 const nextTaskMins = sessionData.tasks[sessionData.currentTaskIndex].minutes;
@@ -418,6 +483,25 @@
 
             saveSessionData();
             updateDocumentTitle();
+        }
+
+        /************************************************************************
+         * ALL DONE => runState=0
+         ************************************************************************/
+        function allDone() {
+            document.getElementById('finishCurrentBtn').disabled = true;
+            document.getElementById('currentTaskTimer').textContent = 'ALL DONE';
+            sessionData.currentTaskEndTime = null;
+
+            // STOP total
+            if (totalTimerInterval) {
+                clearInterval(totalTimerInterval);
+                totalTimerInterval = null;
+            }
+            document.title = "All Tasks Done";
+
+            // runState => 0 again
+            sessionData.runState = 0;
         }
 
         /************************************************************************
