@@ -3,13 +3,38 @@
 
 <head>
     <meta charset="utf-8" />
-    <!-- We'll dynamically change document.title in JS -->
-    <title>Sequential Speedrunning Pomodoro (3-Way Toggle View + Deletion + runState)</title>
+    <title>Sequential Speedrunning Pomodoro (3 Themes + 3-Way Toggle + runState)</title>
     <style>
+        /************************************************************
+     *  THEME VARIABLES (DEFAULT = "Moonlit Stone")
+     ************************************************************/
+        :root {
+            /* Default to "Moonlit Stone" */
+            --bg-color: #2E3B4E;
+            /* Dark Indigo */
+            --accent-color: #4B5367;
+            /* Slate Gray */
+            --text-color: #BFC5D2;
+            /* Soft Lavender-Gray */
+        }
+
+        html,
         body {
+            margin: 0;
+            padding: 0;
             font-family: sans-serif;
-            margin: 20px;
-            background: #fafafa;
+            transition: background 0.5s, color 0.5s;
+            background: var(--bg-color);
+            color: var(--text-color);
+        }
+
+        .main-container {
+            max-width: 900px;
+            margin: 20px auto;
+            padding: 20px;
+            background: var(--accent-color);
+            transition: background 0.5s, color 0.5s;
+            border-radius: 8px;
         }
 
         h1 {
@@ -33,7 +58,6 @@
             font-size: 1.5rem;
             margin: 5px 0;
             min-height: 1em;
-            /* just to keep space if it's empty */
         }
 
         .negative {
@@ -48,11 +72,14 @@
         #addTaskBtn,
         #startAllBtn,
         #finishCurrentBtn,
-        #toggleViewBtn {
+        #toggleViewBtn,
+        #toggleThemeBtn {
             padding: 10px 20px;
             font-size: 1rem;
             cursor: pointer;
             margin: 5px;
+            border: none;
+            border-radius: 4px;
         }
 
         .task-list {
@@ -110,31 +137,68 @@
             cursor: pointer;
             font-size: 0.85rem;
             margin-top: 5px;
+            border-radius: 4px;
         }
     </style>
 </head>
 
 <body>
 
-    <h1>Sequential Speedrunning Pomodoro (3-Way Toggle + Delete + runState)</h1>
+    <div class="main-container">
+        <h1>Sequential Speedrunning Pomodoro (3 Themes + 3-Way Toggle + Delete + runState)</h1>
 
-    <div class="timers">
-        <!-- Big "current" timer -->
-        <div id="currentTaskTimer">00:00</div>
-        <!-- Smaller "total" timer (we'll cycle among 3 states) -->
-        <div id="totalTimer">Total: 00:00</div>
+        <div class="timers">
+            <!-- Big "current" timer -->
+            <div id="currentTaskTimer">00:00</div>
+            <!-- Smaller "total" timer (we'll cycle among 3 states) -->
+            <div id="totalTimer">Total: 00:00</div>
+        </div>
+
+        <div id="controls">
+            <button id="addTaskBtn">Add Task</button>
+            <button id="startAllBtn">Start All</button>
+            <button id="finishCurrentBtn" disabled>Finish Current Task</button>
+            <button id="toggleViewBtn">Toggle View</button>
+            <!-- NEW THEME BUTTON -->
+            <button id="toggleThemeBtn">Toggle Theme</button>
+        </div>
+
+        <div class="task-list" id="taskContainer"></div>
     </div>
-
-    <div id="controls">
-        <button id="addTaskBtn">Add Task</button>
-        <button id="startAllBtn">Start All</button>
-        <button id="finishCurrentBtn" disabled>Finish Current Task</button>
-        <button id="toggleViewBtn">Toggle View</button>
-    </div>
-
-    <div class="task-list" id="taskContainer"></div>
 
     <script>
+        /************************************************************************
+         * THEME TOGGLER (3 Themes)
+         * 1 => "Moonlit Stone"
+         * 2 => "Fungal Wastes Lull"
+         * 3 => "City of Tears Twilight"
+         ************************************************************************/
+        let currentTheme = 1;
+
+        document.getElementById('toggleThemeBtn').addEventListener('click', () => {
+            if (currentTheme === 1) {
+                // 2 => Fungal Wastes Lull
+                document.documentElement.style.setProperty('--bg-color', '#46494C');     // Earthy Charcoal
+                document.documentElement.style.setProperty('--accent-color', '#595F4C'); // Muted Moss
+                document.documentElement.style.setProperty('--text-color', '#B0B7A1');   // Pale Sage
+                currentTheme = 2;
+
+            } else if (currentTheme === 2) {
+                // 3 => City of Tears Twilight
+                document.documentElement.style.setProperty('--bg-color', '#2A2E37');     // Deep Cool Gray
+                document.documentElement.style.setProperty('--accent-color', '#5B6170'); // Steel Hue
+                document.documentElement.style.setProperty('--text-color', '#A5ABB8');   // Gentle Silver-Lilac
+                currentTheme = 3;
+
+            } else {
+                // 1 => Moonlit Stone
+                document.documentElement.style.setProperty('--bg-color', '#2E3B4E');     // Dark Indigo
+                document.documentElement.style.setProperty('--accent-color', '#4B5367'); // Slate Gray
+                document.documentElement.style.setProperty('--text-color', '#BFC5D2');   // Soft Lavender-Gray
+                currentTheme = 1;
+            }
+        });
+
         /************************************************************************
          * SESSION DATA
          ************************************************************************/
@@ -297,6 +361,7 @@
             row.appendChild(taskInfo);
             row.appendChild(deleteBtn);
 
+            // Append row
             document.getElementById('taskContainer').appendChild(row);
 
             taskDOMs[index] = {
