@@ -177,24 +177,16 @@
 
         document.getElementById('toggleThemeBtn').addEventListener('click', () => {
             if (currentTheme === 1) {
-                // 2 => Fungal Wastes Lull
-                document.documentElement.style.setProperty('--bg-color', '#46494C');     // Earthy Charcoal
-                document.documentElement.style.setProperty('--accent-color', '#595F4C'); // Muted Moss
-                document.documentElement.style.setProperty('--text-color', '#B0B7A1');   // Pale Sage
+                // 2 => City of Tears Twilight
+                document.documentElement.style.setProperty('--bg-color', '#2A2E37');
+                document.documentElement.style.setProperty('--accent-color', '#5B6170');
+                document.documentElement.style.setProperty('--text-color', '#A5ABB8');
                 currentTheme = 2;
-
-            } else if (currentTheme === 2) {
-                // 3 => City of Tears Twilight
-                document.documentElement.style.setProperty('--bg-color', '#2A2E37');     // Deep Cool Gray
-                document.documentElement.style.setProperty('--accent-color', '#5B6170'); // Steel Hue
-                document.documentElement.style.setProperty('--text-color', '#A5ABB8');   // Gentle Silver-Lilac
-                currentTheme = 3;
-
             } else {
                 // 1 => Moonlit Stone
-                document.documentElement.style.setProperty('--bg-color', '#2E3B4E');     // Dark Indigo
-                document.documentElement.style.setProperty('--accent-color', '#4B5367'); // Slate Gray
-                document.documentElement.style.setProperty('--text-color', '#BFC5D2');   // Soft Lavender-Gray
+                document.documentElement.style.setProperty('--bg-color', '#2E3B4E');
+                document.documentElement.style.setProperty('--accent-color', '#4B5367');
+                document.documentElement.style.setProperty('--text-color', '#BFC5D2');
                 currentTheme = 1;
             }
         });
