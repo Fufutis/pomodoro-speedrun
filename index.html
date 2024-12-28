@@ -3,7 +3,8 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Sequential Speedrunning Pomodoro (Session + Task-Specific Finish Info, MM:SS)</title>
+    <!-- We'll dynamically change document.title in JS -->
+    <title>Sequential Speedrunning Pomodoro (3-Way Toggle View)</title>
     <style>
         body {
             font-family: sans-serif;
@@ -31,6 +32,8 @@
         #totalTimer {
             font-size: 1.5rem;
             margin: 5px 0;
+            min-height: 1em;
+            /* just to keep space if it's empty */
         }
 
         .negative {
@@ -44,7 +47,8 @@
 
         #addTaskBtn,
         #startAllBtn,
-        #finishCurrentBtn {
+        #finishCurrentBtn,
+        #toggleViewBtn {
             padding: 10px 20px;
             font-size: 1rem;
             cursor: pointer;
@@ -59,7 +63,6 @@
         .task-row {
             display: flex;
             align-items: flex-start;
-            /* so we can stack finish info if needed */
             gap: 10px;
             background: #fff;
             padding: 10px;
@@ -84,12 +87,10 @@
             font-size: 1rem;
         }
 
-        /* This is where we display the finish info for each task */
         .task-finish-info {
             font-size: 0.9rem;
             margin-top: 8px;
             min-height: 1.2em;
-            /* to keep space even if blank */
         }
 
         .task-finish-info.early {
@@ -104,12 +105,12 @@
 
 <body>
 
-    <h1>Sequential Speedrunning Pomodoro (Session-Based, MM:SS)</h1>
+    <h1>Sequential Speedrunning Pomodoro (3-Way Toggle View)</h1>
 
     <div class="timers">
         <!-- Big "current" timer -->
         <div id="currentTaskTimer">00:00</div>
-        <!-- Smaller "total" timer -->
+        <!-- Smaller "total" timer (we'll cycle among 3 states) -->
         <div id="totalTimer">Total: 00:00</div>
     </div>
 
@@ -117,42 +118,31 @@
         <button id="addTaskBtn">Add Task</button>
         <button id="startAllBtn">Start All</button>
         <button id="finishCurrentBtn" disabled>Finish Current Task</button>
+        <button id="toggleViewBtn">Toggle View</button>
     </div>
 
     <div class="task-list" id="taskContainer"></div>
 
     <script>
         /************************************************************************
-         * SESSION DATA STRUCTURE
-         *
-         * We'll store and restore the following in sessionStorage:
-         * {
-         *   tasks: [
-         *     { name: string, minutes: number, finishInfo: string|null }
-         *   ],
-         *   currentTaskIndex: number,
-         *   currentTaskEndTime: number|null,  // ms timestamp
-         *   totalEndTime: number|null,        // ms timestamp
-         *   isSequenceRunning: boolean,       // did we press StartAll?
-         * }
+         * SESSION DATA
          ************************************************************************/
-
         let currentTaskInterval = null;
         let totalTimerInterval = null;
 
-        /** In-memory data we sync with sessionStorage. **/
+        // We store:
+        // - totalAllocatedSec: total # of seconds from all tasks
+        // - viewMode: 0 => "Time Left", 1 => "Spent / Left", 2 => "Nothing"
         let sessionData = {
-            tasks: [],
+            tasks: [],                  // { name, minutes, finishInfo }
             currentTaskIndex: -1,
             currentTaskEndTime: null,
             totalEndTime: null,
-            isSequenceRunning: false
+            totalAllocatedSec: 0,
+            isSequenceRunning: false,
+            viewMode: 0                // new property to remember which view we’re on
         };
 
-        /** We'll keep an array of DOM references. 
-         *  Each entry matches sessionData.tasks[index].
-         *  We add a "finishInfoElem" to display the finish text in that row.
-         */
         const taskDOMs = []; // { row, nameInput, minInput, finishInfoElem }
 
         /************************************************************************
@@ -165,42 +155,38 @@
         });
 
         /************************************************************************
-         * SETUP EVENT HANDLERS
+         * EVENT HANDLERS
          ************************************************************************/
         function setupEventHandlers() {
             document.getElementById('addTaskBtn').addEventListener('click', addTask);
             document.getElementById('startAllBtn').addEventListener('click', startAll);
             document.getElementById('finishCurrentBtn').addEventListener('click', finishCurrentTask);
+            document.getElementById('toggleViewBtn').addEventListener('click', toggleView);
         }
 
         /************************************************************************
-         * LOAD SESSION DATA
+         * LOAD / SAVE SESSION DATA
          ************************************************************************/
         function loadSessionData() {
             const saved = sessionStorage.getItem('seqPomodoroData');
-            if (!saved) {
-                return; // no saved data
-            }
+            if (!saved) return;
             const parsed = JSON.parse(saved);
 
             sessionData.tasks = parsed.tasks || [];
             sessionData.currentTaskIndex = parsed.currentTaskIndex ?? -1;
             sessionData.currentTaskEndTime = parsed.currentTaskEndTime ?? null;
             sessionData.totalEndTime = parsed.totalEndTime ?? null;
+            sessionData.totalAllocatedSec = parsed.totalAllocatedSec ?? 0;
             sessionData.isSequenceRunning = parsed.isSequenceRunning ?? false;
+            sessionData.viewMode = parsed.viewMode ?? 0;  // restore the viewMode if we want
         }
 
-        /************************************************************************
-         * SAVE SESSION DATA
-         ************************************************************************/
         function saveSessionData() {
             sessionStorage.setItem('seqPomodoroData', JSON.stringify(sessionData));
         }
 
         /************************************************************************
          * INIT UI FROM SESSION
-         * 1) Rebuild the task rows from sessionData.tasks
-         * 2) If isSequenceRunning, re-init intervals for current & total timers
          ************************************************************************/
         function initUIFromSession() {
             // Rebuild tasks
@@ -209,7 +195,7 @@
                 createTaskRow(t.name, t.minutes, t.finishInfo);
             }
 
-            // If we have tasks, possibly update the "Finish Current" button
+            // Possibly enable "Finish Current"
             if (
                 sessionData.currentTaskIndex >= 0 &&
                 sessionData.currentTaskIndex < sessionData.tasks.length
@@ -217,33 +203,35 @@
                 document.getElementById('finishCurrentBtn').disabled = false;
             }
 
-            // If the sequence was running, re-init intervals
+            // If sequence was running, restore intervals
             if (sessionData.isSequenceRunning) {
-                // Start total timer if needed
                 if (sessionData.totalEndTime) {
                     startTotalTimerInterval();
                 }
-                // Start current task timer if needed
                 if (
                     sessionData.currentTaskIndex >= 0 &&
                     sessionData.currentTaskIndex < sessionData.tasks.length
                 ) {
                     startCurrentTaskInterval();
                 } else if (sessionData.currentTaskIndex >= sessionData.tasks.length) {
-                    // Means "All done"
                     document.getElementById('currentTaskTimer').textContent = 'ALL DONE';
                     document.getElementById('finishCurrentBtn').disabled = true;
+                    // Stop total
+                    if (totalTimerInterval) {
+                        clearInterval(totalTimerInterval);
+                        totalTimerInterval = null;
+                    }
+                    document.title = "All Tasks Done";
                 }
             }
 
-            // Immediately update timer displays
             updateCurrentTaskTimerDisplay();
-            updateTotalTimerDisplay();
+            updateTotalTimerDisplay();  // reflect the restored mode
+            updateDocumentTitle();
         }
 
         /************************************************************************
-         * CREATE TASK ROW (DOM)
-         * If name/minutes/finishInfo are given, we populate them, otherwise empty
+         * CREATE TASK ROW
          ************************************************************************/
         function createTaskRow(nameVal = '', minsVal = '', finishText = null) {
             const row = document.createElement('div');
@@ -252,7 +240,7 @@
             const taskInfo = document.createElement('div');
             taskInfo.classList.add('task-info');
 
-            // Task Name
+            // Name
             const nameLabel = document.createElement('label');
             nameLabel.classList.add('task-name-label');
             nameLabel.textContent = 'Task Name: ';
@@ -261,7 +249,7 @@
             nameInput.value = nameVal;
             nameInput.placeholder = 'My Task';
 
-            // Task Minutes
+            // Minutes
             const minLabel = document.createElement('label');
             minLabel.textContent = 'Minutes: ';
             const minInput = document.createElement('input');
@@ -275,7 +263,7 @@
             taskInfo.appendChild(minLabel);
             taskInfo.appendChild(minInput);
 
-            // This is where we display finish info (early/late + total at that moment)
+            // Finish info
             const finishInfoElem = document.createElement('div');
             finishInfoElem.classList.add('task-finish-info');
             if (finishText) {
@@ -287,12 +275,10 @@
                 }
             }
 
-            // Put them together
             taskInfo.appendChild(finishInfoElem);
             row.appendChild(taskInfo);
             document.getElementById('taskContainer').appendChild(row);
 
-            // Keep references
             taskDOMs.push({
                 row,
                 nameInput,
@@ -302,26 +288,25 @@
         }
 
         /************************************************************************
-         * ADD TASK BUTTON HANDLER
+         * ADD TASK
          ************************************************************************/
         function addTask() {
             createTaskRow();
-            // Also push to sessionData
             sessionData.tasks.push({ name: '', minutes: 5, finishInfo: null });
             saveSessionData();
         }
 
         /************************************************************************
-         * START ALL (SEQUENCE)
+         * START ALL
          ************************************************************************/
         function startAll() {
             if (sessionData.tasks.length === 0) {
-                alert('Please add at least one task first.');
+                alert('Please add at least one task.');
                 return;
             }
 
             // Validate
-            let totalMins = 0;
+            let totalSec = 0;
             for (let i = 0; i < taskDOMs.length; i++) {
                 const name = taskDOMs[i].nameInput.value.trim();
                 const mins = parseInt(taskDOMs[i].minInput.value, 10);
@@ -332,89 +317,71 @@
                 }
             }
 
-            // Update sessionData from DOM
-            totalMins = 0;
+            // Update from DOM
+            totalSec = 0;
             for (let i = 0; i < sessionData.tasks.length; i++) {
                 sessionData.tasks[i].name = taskDOMs[i].nameInput.value.trim();
                 sessionData.tasks[i].minutes = parseInt(taskDOMs[i].minInput.value, 10);
-                // Clear old finish info
                 sessionData.tasks[i].finishInfo = null;
-
-                totalMins += sessionData.tasks[i].minutes;
+                totalSec += sessionData.tasks[i].minutes * 60;
             }
 
             const now = Date.now();
-            // totalEndTime
-            sessionData.totalEndTime = now + totalMins * 60 * 1000;
-            // currentTaskIndex => 0
+            sessionData.totalAllocatedSec = totalSec;
+            sessionData.totalEndTime = now + totalSec * 1000;
             sessionData.currentTaskIndex = 0;
-            // currentTaskEndTime => now + (minutes of first task)
-            if (sessionData.tasks.length > 0) {
-                const firstTaskMins = sessionData.tasks[0].minutes;
-                sessionData.currentTaskEndTime = now + firstTaskMins * 60 * 1000;
-            }
+            sessionData.currentTaskEndTime = now + (sessionData.tasks[0].minutes * 60 * 1000);
             sessionData.isSequenceRunning = true;
 
-            // Clear old intervals if any
             if (totalTimerInterval) clearInterval(totalTimerInterval);
             if (currentTaskInterval) clearInterval(currentTaskInterval);
 
-            // Start intervals
             startTotalTimerInterval();
             startCurrentTaskInterval();
 
-            // Enable "Finish Current Task"
             document.getElementById('finishCurrentBtn').disabled = false;
 
-            // Save
             saveSessionData();
+            updateDocumentTitle();
         }
 
         /************************************************************************
-         * FINISH CURRENT TASK BUTTON
+         * FINISH CURRENT TASK
          ************************************************************************/
         function finishCurrentTask() {
-            // Stop current task interval
             if (currentTaskInterval) {
                 clearInterval(currentTaskInterval);
                 currentTaskInterval = null;
             }
 
-            // figure out the CURRENT index & times
             const idx = sessionData.currentTaskIndex;
             if (idx < 0 || idx >= sessionData.tasks.length) {
-                // nothing to do
                 return;
             }
 
             const now = Date.now();
             const diffSec = Math.floor((sessionData.currentTaskEndTime - now) / 1000);
 
-            // Also figure out how much total time was left
+            // total time left
             let totalDiffSec = null;
             if (sessionData.totalEndTime) {
                 totalDiffSec = Math.floor((sessionData.totalEndTime - now) / 1000);
             }
 
-            // Convert these to MM:SS
-            const absTask = Math.abs(diffSec);      // absolute seconds for current task
-            const absTotal = totalDiffSec !== null ? Math.abs(totalDiffSec) : null;
+            const absTask = Math.abs(diffSec);
+            const absTotal = (totalDiffSec !== null) ? Math.abs(totalDiffSec) : null;
 
-            // Build a message
             let message = '';
-            let cssClass = ''; // 'early' or 'late'
+            let cssClass = '';
 
             if (diffSec > 0) {
-                // Early
                 message = `Finished ${formatMinSec(absTask)} early`;
                 cssClass = 'early';
             } else {
-                // Late
                 message = `Finished ${formatMinSec(absTask)} late`;
                 cssClass = 'late';
             }
 
-            // Also mention total time at that moment in MM:SS
             if (totalDiffSec !== null) {
                 if (totalDiffSec > 0) {
                     message += `, with ${formatMinSec(absTotal)} left in total`;
@@ -423,30 +390,34 @@
                 }
             }
 
-            // Save that message to sessionData for this task
             sessionData.tasks[idx].finishInfo = message;
-            // Update the DOM for that row
             const finishElem = taskDOMs[idx].finishInfoElem;
             finishElem.textContent = message;
             finishElem.classList.remove('early', 'late');
             finishElem.classList.add(cssClass);
 
-            // Move to next
             sessionData.currentTaskIndex++;
             if (sessionData.currentTaskIndex >= sessionData.tasks.length) {
                 // ALL DONE
                 document.getElementById('finishCurrentBtn').disabled = true;
                 document.getElementById('currentTaskTimer').textContent = 'ALL DONE';
                 sessionData.currentTaskEndTime = null;
+
+                // STOP total
+                if (totalTimerInterval) {
+                    clearInterval(totalTimerInterval);
+                    totalTimerInterval = null;
+                }
+                document.title = "All Tasks Done";
             } else {
-                // Start the next task
+                // Next
                 const nextTaskMins = sessionData.tasks[sessionData.currentTaskIndex].minutes;
                 sessionData.currentTaskEndTime = now + nextTaskMins * 60 * 1000;
                 startCurrentTaskInterval();
             }
 
-            // Save
             saveSessionData();
+            updateDocumentTitle();
         }
 
         /************************************************************************
@@ -454,12 +425,9 @@
          ************************************************************************/
         function startCurrentTaskInterval() {
             if (currentTaskInterval) clearInterval(currentTaskInterval);
-            currentTaskInterval = setInterval(() => {
-                updateCurrentTaskTimerDisplay();
-            }, 1000);
-
-            // Update immediately
+            currentTaskInterval = setInterval(updateCurrentTaskTimerDisplay, 1000);
             updateCurrentTaskTimerDisplay();
+            updateDocumentTitle();
         }
 
         /************************************************************************
@@ -467,21 +435,15 @@
          ************************************************************************/
         function startTotalTimerInterval() {
             if (totalTimerInterval) clearInterval(totalTimerInterval);
-            totalTimerInterval = setInterval(() => {
-                updateTotalTimerDisplay();
-            }, 1000);
-
-            // Update once right away
+            totalTimerInterval = setInterval(updateTotalTimerDisplay, 1000);
             updateTotalTimerDisplay();
         }
 
         /************************************************************************
-         * UPDATE CURRENT TASK TIMER DISPLAY (MM:SS)
+         * UPDATE CURRENT TASK TIMER
          ************************************************************************/
         function updateCurrentTaskTimerDisplay() {
             const timerElem = document.getElementById('currentTaskTimer');
-
-            // If no current task or all done
             if (
                 sessionData.currentTaskIndex < 0 ||
                 sessionData.currentTaskIndex >= sessionData.tasks.length ||
@@ -510,10 +472,13 @@
         }
 
         /************************************************************************
-         * UPDATE TOTAL TIMER DISPLAY (MM:SS)
+         * UPDATE TOTAL TIMER DISPLAY
+         * viewMode cycles 0 -> 1 -> 2 -> 0
          ************************************************************************/
         function updateTotalTimerDisplay() {
             const totalElem = document.getElementById('totalTimer');
+
+            // If no totalEndTime, just show 00:00
             if (!sessionData.totalEndTime) {
                 totalElem.textContent = 'Total: 00:00';
                 return;
@@ -522,24 +487,93 @@
             const now = Date.now();
             let diffSec = Math.floor((sessionData.totalEndTime - now) / 1000);
 
-            if (diffSec <= 0) {
-                // Negative
-                const late = Math.abs(diffSec);
-                const mins = Math.floor(late / 60);
-                const secs = late % 60;
-                totalElem.classList.add('negative');
-                totalElem.textContent = `Total: -${padZero(mins)}:${padZero(secs)}`;
-            } else {
-                // Positive
-                const mins = Math.floor(diffSec / 60);
-                const secs = diffSec % 60;
-                totalElem.classList.remove('negative');
-                totalElem.textContent = `Total: ${padZero(mins)}:${padZero(secs)}`;
+            // leftSec = diffSec
+            // spentSec = allocated - leftSec
+            // if leftSec < 0 => spentSec = allocated + abs(leftSec)
+
+            const leftSec = diffSec;
+            const allocated = sessionData.totalAllocatedSec;
+            let spentSec = allocated - leftSec;
+            if (leftSec < 0) {
+                spentSec = allocated + Math.abs(leftSec);
+            }
+
+            // Based on viewMode, we display different text
+            switch (sessionData.viewMode) {
+                case 0:
+                    // 0 => Time Left
+                    if (leftSec <= 0) {
+                        // Negative
+                        const late = Math.abs(leftSec);
+                        const mins = Math.floor(late / 60);
+                        const secs = late % 60;
+                        totalElem.classList.add('negative');
+                        totalElem.textContent = `Total: -${padZero(mins)}:${padZero(secs)}`;
+                    } else {
+                        // Positive
+                        const mins = Math.floor(leftSec / 60);
+                        const secs = leftSec % 60;
+                        totalElem.classList.remove('negative');
+                        totalElem.textContent = `Total: ${padZero(mins)}:${padZero(secs)}`;
+                    }
+                    break;
+
+                case 1:
+                    // 1 => "Spent: XX / Left: YY"
+                    let leftSecToShow = leftSec < 0 ? 0 : leftSec;
+                    if (spentSec < 0) spentSec = 0;
+
+                    const spentMMSS = formatMinSec(spentSec);
+                    const leftMMSS = formatMinSec(leftSecToShow);
+
+                    if (leftSec <= 0) {
+                        totalElem.classList.add('negative');
+                    } else {
+                        totalElem.classList.remove('negative');
+                    }
+                    totalElem.textContent = `Spent: ${spentMMSS} / Left: ${leftMMSS}`;
+                    break;
+
+                case 2:
+                    // 2 => "Nothing"
+                    totalElem.textContent = '';
+                    totalElem.classList.remove('negative');
+                    break;
             }
         }
 
         /************************************************************************
-         * HELPER: formatMinSec (returns MM:SS for a number of seconds)
+         * TOGGLE VIEW
+         * Cycles: 0 -> 1 -> 2 -> 0
+         ************************************************************************/
+        function toggleView() {
+            sessionData.viewMode = (sessionData.viewMode + 1) % 3;
+            saveSessionData(); // remember the mode
+            updateTotalTimerDisplay();
+        }
+
+        /************************************************************************
+         * UPDATE DOCUMENT TITLE
+         ************************************************************************/
+        function updateDocumentTitle() {
+            if (sessionData.currentTaskIndex >= sessionData.tasks.length) {
+                document.title = "All Tasks Done";
+                return;
+            }
+            if (sessionData.currentTaskIndex < 0) {
+                document.title = "Speedrunning Pomodoro";
+                return;
+            }
+            const currentTask = sessionData.tasks[sessionData.currentTaskIndex];
+            if (currentTask && currentTask.name) {
+                document.title = "Current Task: " + currentTask.name;
+            } else {
+                document.title = "Current Task";
+            }
+        }
+
+        /************************************************************************
+         * HELPERS
          ************************************************************************/
         function formatMinSec(sec) {
             const mins = Math.floor(sec / 60);
@@ -547,9 +581,6 @@
             return `${padZero(mins)}:${padZero(remainder)}`;
         }
 
-        /************************************************************************
-         * HELPER: padZero
-         ************************************************************************/
         function padZero(num) {
             return num < 10 ? '0' + num : num;
         }
